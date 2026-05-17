@@ -1,0 +1,18 @@
+build
+mx.scratch
+!.settings
+bin/
+obj/
+
+# Временные файлы STM32CubeIDE / Keil / IAR
+.mxproject
+*.pbi
+*.browse
+*.pbe
+*.uvguix.*
+*.uvoptx
+
+# Локальные настройки редакторов
+.vscode/
+.idea/
+*.swp
