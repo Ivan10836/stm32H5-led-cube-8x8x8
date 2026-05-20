@@ -1,82 +1,51 @@
+#include "Efects/Ball.h"
+#include "Efects/Snake.h"
+#include "Efects/Music.h"
+#include "Buttons.h"
+
+// Координаты нашей точки
+int8_t pointX = 3; 
+int8_t pointY = 3;
+int8_t pointZ = 3;
+bool isFirst = true;
+
 void Frame() {
-    // ==================== SETTINGS ====================
-    static const uint8_t SHIFT_SPEED = 4;      // Скорость движения назад
-    static const float FADE_COEFF = 0.85f;     // Затухание яркости
-    static const float GRAVITY_STEP = 0.6f;    // Смещение вниз за один сдвиг (0.1 - медленно, 1.0 - на целый диод)
-    
-    uint16_t bins[] = {2, 5, 15, 30, 40, 80, 160, 300, 450};
-    float32_t Bias[] = {2.0f, 0.9f, 0.7f, 0.55f, 1.2f, 2.1f, 2.1f, 1.3f}; 
-    float32_t GLOBAL_GAIN = 0.6f;
-    // ==================================================
-
-    static uint8_t shift_divider = 0;
-    shift_divider++;
-
-    // --- 1. АНАЛОГОВЫЙ СДВИГ (ЗАТУХАНИЕ + ПЛАВНОЕ ПАДЕНИЕ) ---
-    bool is_shift_frame = (shift_divider >= SHIFT_SPEED);
-    if (is_shift_frame) shift_divider = 0;
-
-    for (uint8_t z = 7; z > 0; z--) {
-        for (uint8_t x = 0; x < 8; x++) {
-            for (uint8_t y = 0; y < 8; y++) {
-                uint8_t r = 0, g = 0, b = 0;
-                
-                if (is_shift_frame) {
-                    // Читаем два соседних пикселя по вертикали для смешивания
-                    uint8_t rCurr, gCurr, bCurr;
-                    uint8_t rAbove = 0, gAbove = 0, bAbove = 0;
-
-                    GetColorLastFrame(GetIndex(x, y, z - 1), &rCurr, &gCurr, &bCurr);
-                    if (y < 7) {
-                        GetColorLastFrame(GetIndex(x, y + 1, z - 1), &rAbove, &gAbove, &bAbove);
-                    }
-
-                    // Линейная интерполяция (смешиваем текущий и верхний)
-                    // Чем больше GRAVITY_STEP, тем больше берем от верхнего пикселя
-                    r = (uint8_t)((rCurr * (1.0f - GRAVITY_STEP) + rAbove * GRAVITY_STEP) * FADE_COEFF);
-                    g = (uint8_t)((gCurr * (1.0f - GRAVITY_STEP) + gAbove * GRAVITY_STEP) * FADE_COEFF);
-                    b = (uint8_t)((bCurr * (1.0f - GRAVITY_STEP) + bAbove * GRAVITY_STEP) * FADE_COEFF);
-                } else {
-                    // Копируем слой для стабильности кадра
-                    GetColorLastFrame(GetIndex(x, y, z), &r, &g, &b);
-                }
-                SetColor(GetIndex(x, y, z), r, g, b);
-            }
-        }
+    // Инициализация при первом запуске
+    if(isFirst) {
+        isFirst = false;
+        Input_Init();
     }
 
-    // --- 2. НОВЫЙ СПЕКТР (Z=0) ---
-    float32_t* spectrum = GetMicrophoneSpectrum();
+    // 1. Обновляем состояние кнопок и инкремент осей
+    Input_Update();
 
-    for (uint8_t x = 0; x < 8; x++) {
-        float32_t sum = 0;
-        uint16_t start_index = bins[x];
-        uint16_t end_index = bins[x+1];
+    // --- ПРОВЕРКА GetAxis (Дискретно: -1, 0, 1) ---
+    // По Z (Право/Лево) и Y (Верх/Низ) точка будет ПРЫГАТЬ
+    pointZ = 3 + GetAxis(AXIS_Z);
+    pointY = 3 + GetAxis(AXIS_Y);
 
-        for (uint16_t j = start_index; j < end_index; j++) {
-            sum += spectrum[j];
-        }
-        
-        float32_t avg = sum / (float32_t)(end_index - start_index);
-        float32_t boost = 0.1f + (x * 0.2f); 
-        float32_t exact_height = (avg * GLOBAL_GAIN * boost - 1.0f) * Bias[x]; 
+    // --- ПРОВЕРКА GetAxisRaw (Плавно: -128...128) ---
+    // По X (Вперед/Назад) точка будет ПЛАВНО ПЛЫТЬ
+    // Делим на 32, чтобы диапазон был от -4 до +4 относительно центра
+    pointX = 3 + (GetAxisRaw(AXIS_X) / 32);
 
-        if (exact_height > 8.0f) exact_height = 8.0f;
-        if (exact_height < 0.0f) exact_height = 0.0f;
+    // --- ПРОВЕРКА GetButtonDown и GetButton ---
+    uint8_t r = 255, g = 255, b = 255;
 
-        // Палитра (градиент)
-        uint8_t baseR = (x < 4) ? 100 : 0;
-        uint8_t baseG = (x > 1 && x < 6) ? 100 : 0;
-        uint8_t baseB = (x >= 4) ? 100 : 0;
-
-        for (uint8_t y = 0; y < 8; y++) {
-            float32_t diff = exact_height - (float32_t)y;
-            float32_t factor = (diff >= 1.0f) ? 1.0f : (diff > 0.0f ? diff : 0.0f);
-
-            SetColor(GetIndex(x, y, 0), 
-                     (uint8_t)(baseR * factor), 
-                     (uint8_t)(baseG * factor), 
-                     (uint8_t)(baseB * factor));
-        }
+    if (GetButton(BTN_DOWN)) {
+        // Пока держим DOWN — точка синяя
+        r = 0; g = 0; b = 255;
     }
+
+    if (GetButtonDown(BTN_UP)) {
+        // В момент нажатия UP — вспышка красным на один кадр
+        r = 255; g = 0; b = 0;
+    }
+
+    // 2. Отрисовка
+    // Полная очистка куба перед рисованием новой точки
+    for(int i = 0; i < 512; i++) SetColor(i, 0, 0, 0);
+
+    // Рисуем точку в новых координатах
+    SetColor(GetIndex(pointX, pointY, pointZ), r, g, b);
 }
